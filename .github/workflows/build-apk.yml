@@ -44,51 +44,18 @@ jobs:
           java-version: '17'
 
       - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
 
       - name: Install upstream Android toolchain
         shell: bash
         run: |
-          NDK_VERSION=$(sed -n 's/.*ndkVersion = "\([^"]*\)".*/\1/p' upstream/app/build.gradle.kts | head -1)
+          NDK_VERSION=$(sed -n 's/.*ndkVersion = "[^"]*".*/\1/p' upstream/app/build.gradle.kts | head -1)
           test -n "$NDK_VERSION"
           sdkmanager 'platforms;android-36' 'build-tools;36.0.0' "ndk;$NDK_VERSION" 'cmake;3.22.1'
 
       - name: Build debug-signed APK
         working-directory: upstream
         run: |
-          chmod +x gradlew
-          ./gradlew :app:assembleGithubDebug --no-daemon --stacktrace
-
-      - name: Verify APK identity, signature, size and checksum
-        shell: bash
-        run: |
-          mkdir -p dist
-          mapfile -t APKS < <(find upstream/app/build/outputs/apk/github/debug -name '*.apk' -type f)
-          test "${#APKS[@]}" -eq 1
-          APK="${APKS[0]}"
-          test -s "$APK"
-          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose "$APK"
-          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" > dist/apk-badging.txt
-          grep -q "package: name='com.voobax.drive'" dist/apk-badging.txt
-          cp "$APK" dist/VOOBAX-Drive-debug.apk
-          cd dist
-          stat --printf='%n %s bytes\n' VOOBAX-Drive-debug.apk | tee APK-SIZE.txt
-          sha256sum VOOBAX-Drive-debug.apk | tee SHA256SUMS
-          cat APK-SIZE.txt SHA256SUMS >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: VOOBAX-Drive-debug-APK
-          path: dist/
-          if-no-files-found: error
-
-      - name: Package corresponding patched source
-        run: |
-          tar --exclude=.git --exclude=.gradle --exclude=build --exclude=.cxx -czf VOOBAX-Drive-source.tar.gz upstream apply_voobax.py translations_az.json overlay
-
-      - name: Upload corresponding source
-        uses: actions/upload-artifact@v4
-        with:
-          name: VOOBAX-Drive-corresponding-source
-          path: VOOBAX-Drive-source.tar.gz
-          if-no-files-found: error
+          chmod
