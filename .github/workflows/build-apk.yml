@@ -1,61 +1,48 @@
-name: Build VOOBAX Drive APK
-
-on:
-  workflow_dispatch:
-  push:
-    branches: [main]
-  pull_request:
-
+name: VOOBAX APK
+on: [push, workflow_dispatch]
 permissions:
   contents: read
-
 jobs:
-  android-build:
+  build:
     runs-on: ubuntu-24.04
     timeout-minutes: 90
-
     steps:
       - uses: actions/checkout@v4
-
-      - name: Extract VOOBAX handoff
-        run: |
-          test -s VOOBAX-Drive-reviewed-handoff.zip
-          unzip -o VOOBAX-Drive-reviewed-handoff.zip
-
-      - name: Verify patch regression tests
-        run: python3 -m unittest discover -s tests -v
-
-      - name: Checkout pinned Open Headunit v.3.5.0
-        run: |
-          git init upstream
-          git -C upstream remote add origin https://github.com/andreknieriem/open-headunit.git
-          git -C upstream fetch --depth 1 origin 1c1b5b7261ebebde8000778ff2c06e3af3e3a326
-          git -C upstream checkout --detach FETCH_HEAD
-          test "$(git -C upstream rev-parse HEAD)" = 1c1b5b7261ebebde8000778ff2c06e3af3e3a326
-
-      - name: Apply branding and localization
-        run: |
-          python3 apply_voobax.py upstream
-          test -s upstream/app/src/main/res/values-az/strings.xml
-
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
-
       - uses: android-actions/setup-android@v3
         with:
           packages: platform-tools
           log-accepted-android-sdk-licenses: false
-
-      - name: Install upstream Android toolchain
+      - name: Build and verify APK
         shell: bash
         run: |
-          NDK_VERSION=$(sed -n 's/.*ndkVersion = "[^"]*".*/\1/p' upstream/app/build.gradle.kts | head -1)
-          test -n "$NDK_VERSION"
-          sdkmanager 'platforms;android-36' 'build-tools;36.0.0' "ndk;$NDK_VERSION" 'cmake;3.22.1'
-
-      - name: Build debug-signed APK
-        working-directory: upstream
-        run: |
-          chmod
+          unzip -o VOOBAX-Drive-reviewed-handoff.zip
+          python3 -m unittest discover -s tests -v
+          git init upstream
+          git -C upstream remote add origin https://github.com/andreknieriem/open-headunit.git
+          git -C upstream fetch --depth 1 origin 1c1b5b7261ebebde8000778ff2c06e3af3e3a326
+          git -C upstream checkout --detach FETCH_HEAD
+          python3 apply_voobax.py upstream
+          NDK=$(python3 -c 'from pathlib import Path; print(next(s for s in Path("upstream/app/build.gradle.kts").read_text().splitlines() if "ndkVersion =" in s).split(chr(34))[1])')
+          sdkmanager 'platforms;android-36' 'build-tools;36.0.0' "ndk;$NDK" 'cmake;3.22.1'
+          chmod +x upstream/gradlew
+          cd upstream
+          ./gradlew :app:assembleGithubDebug --no-daemon --stacktrace
+          cd ..
+          mkdir -p dist
+          cp upstream/app/build/outputs/apk/github/debug/*.apk dist/VOOBAX-Drive-debug.apk
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose dist/VOOBAX-Drive-debug.apk
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging dist/VOOBAX-Drive-debug.apk > dist/manifest.txt
+          grep -q "package: name='com.voobax.drive'" dist/manifest.txt
+          tar --exclude=.git --exclude=.gradle --exclude=build --exclude=.cxx -czf dist/source.tar.gz upstream apply_voobax.py translations_az.json overlay
+          cd dist
+          stat -c '%n %s bytes' *.apk | tee SIZE.txt
+          sha256sum *.apk | tee SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VOOBAX-Drive-debug-APK
+          path: dist/
+          if-no-files-found: error
